@@ -5,13 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	units "github.com/docker/go-units"
-	"github.com/flashmob/go-guerrilla"
-	"github.com/flashmob/go-guerrilla/backends"
-	"github.com/flashmob/go-guerrilla/log"
-	"github.com/flashmob/go-guerrilla/mail"
-	"github.com/jhillyerd/enmime"
-	"github.com/urfave/cli/v2"
 	"io/ioutil"
 	"mime"
 	"mime/multipart"
@@ -23,6 +16,14 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	units "github.com/docker/go-units"
+	"github.com/flashmob/go-guerrilla"
+	"github.com/flashmob/go-guerrilla/backends"
+	"github.com/flashmob/go-guerrilla/log"
+	"github.com/flashmob/go-guerrilla/mail"
+	"github.com/jhillyerd/enmime"
+	"github.com/urfave/cli/v2"
 )
 
 var (
@@ -50,6 +51,7 @@ type TelegramConfig struct {
 	forwardedAttachmentMaxPhotoSize  int
 	forwardedAttachmentRespectErrors bool
 	messageLengthToSendAsFile        uint
+	allowedDomains					 string
 }
 
 type TelegramAPIMessageResult struct {
@@ -124,6 +126,7 @@ func main() {
 			forwardedAttachmentMaxPhotoSize:  int(forwardedAttachmentMaxPhotoSize),
 			forwardedAttachmentRespectErrors: c.Bool("forwarded-attachment-respect-errors"),
 			messageLengthToSendAsFile:        c.Uint("message-length-to-send-as-file"),
+			allowedDomains:                    c.String("allowed-domains"),
 		}
 		d, err := SmtpStart(smtpConfig, telegramConfig)
 		if err != nil {
@@ -196,6 +199,13 @@ func main() {
 				"Telegram API has a 10m limit on their side.",
 			Value:   "10m",
 			EnvVars: []string{"ST_FORWARDED_ATTACHMENT_MAX_PHOTO_SIZE"},
+		},
+		&cli.StringFlag{
+			Name: "allowed-domains",
+			Usage: "Only the senders from specified domain are allowed to send mail to this server. " +
+			"Use \",\" to split",
+			Value:   "",
+			EnvVars: []string{"ST_ALLOWED_DOMAINS"},
 		},
 		&cli.BoolFlag{
 			Name: "forwarded-attachment-respect-errors",
@@ -274,11 +284,27 @@ func TelegramBotProcessorFactory(
 	}
 }
 
+func stringInSlice(a string, list []string) bool {
+    for _, b := range list {
+        if b == a {
+            return true
+        }
+    }
+    return false
+}
+
 func SendEmailToTelegram(e *mail.Envelope,
 	telegramConfig *TelegramConfig) error {
 
 	message, err := FormatEmail(e, telegramConfig)
 	if err != nil {
+		return err
+	}
+
+	fromDomain := strings.Split(e.MailFrom.String(), "@")[1]
+	allowedDomains := strings.Split(telegramConfig.allowedDomains, ",")
+	if (stringInSlice(fromDomain,allowedDomains) != true){
+		err = errors.New("Not from a allowed sender")
 		return err
 	}
 
